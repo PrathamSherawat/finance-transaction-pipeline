@@ -9,6 +9,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
+
+from finance_pipeline.schema import COLUMNS
 from datetime import date, datetime, time, timedelta
 
 
@@ -35,6 +37,8 @@ class GeneratorConfig:
     duplicate_rate: float = 0.08
     start_date: date = date(2025, 1, 1)
     window_days: int = 90
+    tie_rate: float = 0.10
+    extra_defects: bool = False
 
     def __post_init__(self) -> None:
         _require_int("num_rows", self.num_rows, minimum=1)
@@ -45,6 +49,14 @@ class GeneratorConfig:
         # datetime is a subclass of date; we want a plain date.
         if isinstance(self.start_date, datetime) or not isinstance(self.start_date, date):
             raise ValueError(f"start_date must be a datetime.date, got {self.start_date!r}")
+        if (
+            isinstance(self.tie_rate, bool)
+            or not isinstance(self.tie_rate, (int, float))
+            or not 0 <= self.tie_rate <= 1
+        ):
+            raise ValueError(f"tie_rate must be a number in [0, 1], got {self.tie_rate!r}")
+        if not isinstance(self.extra_defects, bool):
+            raise ValueError(f"extra_defects must be a bool, got {self.extra_defects!r}")
         total = self.invalid_rate + 2 * self.duplicate_rate
         if total >= 1:
             raise ValueError(
@@ -98,17 +110,6 @@ def make_account_pool(rng: random.Random, size: int) -> list[str]:
     return [f"ACC-{i:04d}" for i in range(1, size + 1)]
 
 
-
-COLUMNS = (
-    "transaction_id",
-    "account_id",
-    "transaction_ts",
-    "transaction_type",
-    "amount",
-    "currency",
-    "status",
-    "source_updated_ts",
-)
 
 # (values, weights) pairs used with rng.choices
 TYPE_CHOICES = (("CREDIT", "DEBIT"), (45, 55))
@@ -185,13 +186,24 @@ BAD_TIMESTAMPS = ("2025-13-45T99:99:99", "not-a-timestamp", "2025/01/01 25:61")
 BAD_CURRENCIES = ("EUR", "")
 BAD_STATUSES = ("REVERSED", "UNKNOWN")
 
+# Opt-in defects (GeneratorConfig.extra_defects=True). Off by default, so the seed-42
+# sample and every exact-count test stay unchanged.
+EXTRA_DEFECTS = (
+    "missing_amount",
+    "malformed_amount",
+    "missing_source_updated_ts",
+    "malformed_source_updated_ts",
+)
+ALL_DEFECTS = DEFECTS + EXTRA_DEFECTS
+BAD_AMOUNTS = ("abc", "10", "10.5", "1,000.00", "$10.00")
+
 
 def apply_defect(
     rng: random.Random, record: dict[str, str], defect: str
 ) -> dict[str, str]:
     """Return a copy of `record` with exactly one field corrupted."""
-    if defect not in DEFECTS:
-        raise ValueError(f"unknown defect {defect!r}; valid defects: {list(DEFECTS)}")
+    if defect not in ALL_DEFECTS:
+        raise ValueError(f"unknown defect {defect!r}; valid defects: {list(ALL_DEFECTS)}")
 
     bad = dict(record)
     if defect == "missing_transaction_id":
@@ -211,7 +223,34 @@ def apply_defect(
         bad["currency"] = rng.choice(BAD_CURRENCIES)
     elif defect == "invalid_status":
         bad["status"] = rng.choice(BAD_STATUSES)
+    elif defect == "missing_amount":
+        bad["amount"] = ""
+    elif defect == "malformed_amount":
+        bad["amount"] = rng.choice(BAD_AMOUNTS)
+    elif defect == "missing_source_updated_ts":
+        bad["source_updated_ts"] = ""
+    elif defect == "malformed_source_updated_ts":
+        bad["source_updated_ts"] = rng.choice(BAD_TIMESTAMPS)
     return bad
+
+
+def make_tie_version(
+    rng: random.Random, original: dict[str, str], conflict: bool
+) -> dict[str, str]:
+    """Return a version with the SAME source_updated_ts as `original`.
+
+    conflict=False: an identical re-delivery.
+    conflict=True: same timestamp but a different status (an ambiguous source).
+    """
+    missing = [c for c in COLUMNS if c not in original]
+    if missing:
+        raise ValueError(f"original is missing columns: {missing}")
+    version = dict(original)
+    if conflict:
+        version["status"] = rng.choice(
+            [s for s in ALL_STATUSES if s != original["status"]]
+        )
+    return version
 
 
 def generate_rows(config: GeneratorConfig) -> list[dict[str, str]]:
@@ -230,14 +269,19 @@ def generate_rows(config: GeneratorConfig) -> list[dict[str, str]]:
         make_valid_transaction(rng, i, accounts, config)
         for i in range(1, counts.valid + 1)
     ]
-    duplicates = [
-        make_duplicate_version(rng, original)
-        for original in rng.sample(base, counts.duplicate)
-    ]
+    n_ties = math.floor(counts.duplicate * config.tie_rate + 1e-9)
+    duplicates = []
+    for k, original in enumerate(rng.sample(base, counts.duplicate)):
+        if k < n_ties:
+            # alternate identical re-deliveries and true conflicts
+            duplicates.append(make_tie_version(rng, original, conflict=(k % 2 == 1)))
+        else:
+            duplicates.append(make_duplicate_version(rng, original))
+    defect_cycle = ALL_DEFECTS if config.extra_defects else DEFECTS
     invalid = []
     for k in range(counts.invalid):
         clean = make_valid_transaction(rng, counts.valid + 1 + k, accounts, config)
-        invalid.append(apply_defect(rng, clean, DEFECTS[k % len(DEFECTS)]))
+        invalid.append(apply_defect(rng, clean, defect_cycle[k % len(defect_cycle)]))
 
     rows = base + duplicates + invalid
     rng.shuffle(rows)
@@ -280,6 +324,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="output CSV path (relative to the current directory)")
     parser.add_argument("--invalid-rate", type=float, default=defaults.invalid_rate)
     parser.add_argument("--duplicate-rate", type=float, default=defaults.duplicate_rate)
+    parser.add_argument("--tie-rate", type=float, default=defaults.tie_rate,
+                        help="share of duplicate versions that reuse the original source_updated_ts")
+    parser.add_argument("--extra-defects", action="store_true",
+                        help="also emit missing/malformed amount and source_updated_ts rows")
     return parser
 
 
@@ -291,6 +339,8 @@ def main(argv: list[str] | None = None) -> int:
             seed=args.seed,
             invalid_rate=args.invalid_rate,
             duplicate_rate=args.duplicate_rate,
+            tie_rate=args.tie_rate,
+            extra_defects=args.extra_defects,
         )
         rows = generate_rows(config)
     except ValueError as exc:

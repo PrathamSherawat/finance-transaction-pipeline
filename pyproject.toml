@@ -7,8 +7,27 @@ name = "finance-pipeline"
 version = "0.1.0"
 requires-python = ">=3.12"
 
+[project.scripts]
+fin-generate = "finance_pipeline.generate_data:main"
+fin-run = "finance_pipeline.pipeline:main"
+fin-incremental = "finance_pipeline.incremental:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: starts Spark (deselect with -m 'not slow')",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true

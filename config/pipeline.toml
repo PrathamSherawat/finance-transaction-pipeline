@@ -1,0 +1,8 @@
+﻿# Pipeline settings. Precedence: CLI flag > FIN_<NAME> env variable > this file > default.
+input_csv = "data/sample/transactions.csv"
+incoming_dir = "data/incoming"
+state_dir = "data/state"
+output_dir = "data/output"
+quarantine_dir = "data/quarantine"
+sql_dir = "sql"
+log_level = "INFO"

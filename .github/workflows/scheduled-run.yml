@@ -1,0 +1,40 @@
+name: Scheduled demo run
+
+on:
+  schedule:
+    - cron: "30 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  demo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - run: python -m pip install -r requirements.txt
+      - run: python -m pip install -e .
+      - name: Run the pipeline on generated data
+        run: python -m finance_pipeline.orchestrate --generate-batches 3 --rows 1000 --seed 42
+      - name: Check the seed-42 result
+        run: |
+          python -c "import json; m = json.load(open('data/output/manifest.json')); assert (m['input_rows'], m['curated_rows'], m['superseded_rows'], m['quarantined_rows']) == (1000, 870, 80, 50), m; print(m)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pipeline-results
+          path: |
+            data/output/manifest.json
+            data/output/kpis/
+            data/state/last_run.json

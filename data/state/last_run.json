@@ -1,0 +1,23 @@
+{
+  "started_at": "2026-10-11T13:13:17+00:00",
+  "finished_at": "2026-10-11T13:13:25+00:00",
+  "exit_code": 0,
+  "tasks": [
+    {
+      "name": "generate_batches",
+      "status": "ok",
+      "attempts": 1,
+      "seconds": 0.031000000002677552,
+      "error": null,
+      "exit_code": 0
+    },
+    {
+      "name": "incremental",
+      "status": "ok",
+      "attempts": 1,
+      "seconds": 0.3129999999946449,
+      "error": null,
+      "exit_code": 0
+    }
+  ]
+}

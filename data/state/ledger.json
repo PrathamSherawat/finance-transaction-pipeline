@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "current_snapshot": "snap_0003",
+  "batches": [
+    {
+      "file": "transactions_0001.csv",
+      "sha256": "3f680863cca37c62d303db642115625bd97623b2964723f1327a195bc5f4fc3a",
+      "input_rows": 334,
+      "snapshot": "snap_0001",
+      "processed_at": "2026-10-11T05:38:36+00:00"
+    },
+    {
+      "file": "transactions_0002.csv",
+      "sha256": "ab43422ac4186f261ed9281cca5e011a14eaf24d51a7a3901c94e2316fa72921",
+      "input_rows": 333,
+      "snapshot": "snap_0002",
+      "processed_at": "2026-10-11T05:38:41+00:00"
+    },
+    {
+      "file": "transactions_0003.csv",
+      "sha256": "ba9e14e528f80aaa206206afbb9fec482c952f917bb5ab3cac6195dc624acb54",
+      "input_rows": 333,
+      "snapshot": "snap_0003",
+      "processed_at": "2026-10-11T05:38:45+00:00"
+    }
+  ]
+}

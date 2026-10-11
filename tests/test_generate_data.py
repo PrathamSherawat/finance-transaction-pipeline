@@ -1,4 +1,5 @@
 import csv
+from collections import Counter, defaultdict
 import dataclasses
 import random
 import re
@@ -17,6 +18,7 @@ from finance_pipeline.generate_data import (
     make_account_pool,
     make_valid_transaction,
     make_duplicate_version,
+    make_tie_version,
     apply_defect,
     generate_rows,
     write_csv,
@@ -53,6 +55,8 @@ def test_config_is_frozen():
         ("invalid_rate", 1.0),
         ("duplicate_rate", 1.5),
         ("window_days", 0),
+        ("tie_rate", -0.1),
+        ("tie_rate", 1.5),
         ("start_date", "2025-01-01"),
     ],
 )
@@ -321,10 +325,6 @@ def test_defect_is_reproducible():
         )
 
 
-
-from collections import Counter, defaultdict
-
-
 def _defect_of(row):
     """Independent classifier: return the defect name, or None if row is valid."""
     if row["transaction_id"] == "":
@@ -407,7 +407,7 @@ def test_generate_rows_duplicate_versions_are_ordered_and_consistent():
         older, newer = sorted(
             (r for _, r in versions), key=lambda r: r["source_updated_ts"]
         )
-        assert newer["source_updated_ts"] > older["source_updated_ts"]
+        assert newer["source_updated_ts"] >= older["source_updated_ts"]
         for f in IMMUTABLE_FIELDS:
             assert newer[f] == older[f]
 
@@ -578,3 +578,67 @@ def test_module_runs_via_python_dash_m(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert (tmp_path / "out" / "t.csv").is_file()
+
+
+def test_tie_rate_boundaries_are_accepted():
+    GeneratorConfig(tie_rate=0)
+    GeneratorConfig(tie_rate=1)
+
+
+def test_make_tie_version_identical_redelivery():
+    orig = _base_record()
+    dup = make_tie_version(random.Random(1), orig, conflict=False)
+    assert dup == orig and dup is not orig
+
+
+def test_make_tie_version_conflict_changes_only_status():
+    for seed in range(100):
+        orig = _base_record(seed=seed)
+        dup = make_tie_version(random.Random(seed), orig, conflict=True)
+        assert _changed_fields(orig, dup) == ["status"]
+        assert dup["source_updated_ts"] == orig["source_updated_ts"]
+
+
+def test_make_tie_version_does_not_mutate_original():
+    orig = _base_record()
+    snapshot = dict(orig)
+    make_tie_version(random.Random(1), orig, conflict=True)
+    assert orig == snapshot
+
+
+def _group_stats(rows):
+    """Return (strictly_later, identical_ties, conflicting_ties) over duplicate groups."""
+    strict = identical = conflict = 0
+    for versions in _duplicate_groups(rows).values():
+        a, b = (r for _, r in versions)
+        if a["source_updated_ts"] != b["source_updated_ts"]:
+            strict += 1
+        elif a == b:
+            identical += 1
+        else:
+            conflict += 1
+    return strict, identical, conflict
+
+
+def test_default_ties_come_out_of_the_duplicate_budget():
+    rows = generate_rows(GeneratorConfig())  # 80 duplicates, tie_rate 0.10 -> 8 ties
+    assert len(rows) == 1000
+    assert _group_stats(rows) == (72, 4, 4)
+
+
+def test_tie_rate_zero_gives_only_strictly_later_versions():
+    rows = generate_rows(GeneratorConfig(tie_rate=0))
+    assert _group_stats(rows) == (80, 0, 0)
+
+
+def test_tie_rate_one_makes_every_duplicate_a_tie():
+    rows = generate_rows(GeneratorConfig(tie_rate=1))
+    assert len(rows) == 1000
+    assert _group_stats(rows) == (0, 40, 40)
+
+
+def test_main_invalid_tie_rate_returns_2(tmp_path, capsys):
+    p = tmp_path / "t.csv"
+    assert main(["--rows", "100", "--tie-rate", "1.5", "--output", str(p)]) == 2
+    assert "tie_rate" in capsys.readouterr().err
+    assert not p.exists()

@@ -1,0 +1,8 @@
+{
+  "input_rows": 1000,
+  "curated_rows": 870,
+  "superseded_rows": 80,
+  "quarantined_rows": 50,
+  "reconciled": true,
+  "batches_processed": 3
+}
